@@ -1,9 +1,9 @@
 % [INPUT]
-% data = A float t-by-n matrix representing the model input.
+% data = A float t-by-n matrix (-Inf,Inf) representing the model input.
 % a = A float [0.01,0.10] representing the target quantile.
 % k = An integer [1,60] representing the target lag.
-% cis = A float (0.0,0.1] representing the significance level of confidence intervals.
-% cib = An integer [10,1000] representing the number of bootstrap iterations of confidence intervals.
+% cis = A float (0.0,0.1] representing the significance level of confidence intervals (optional, default=0.050).
+% cib = An integer [10,1000] representing the number of bootstrap iterations of confidence intervals (optional, default=100).
 %
 % [OUTPUT]
 % cq = A float (-Inf,Inf) representing the cross-quantilogram.
@@ -21,12 +21,12 @@ function [cq,ci] = cross_quantilograms_sb(varargin)
         ip.addRequired('data',@(x)validateattributes(x,{'double'},{'real' 'finite' '2d' 'nonempty'}));
         ip.addRequired('a',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.01 '<=' 0.10 'scalar'}));
         ip.addRequired('k',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 1 '<=' 60 'scalar'}));
-        ip.addRequired('cis',@(x)validateattributes(x,{'double'},{'real' 'finite' '>' 0 '<=' 0.1 'scalar'}));
-        ip.addRequired('cib',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 10 '<=' 1000 'scalar'}));
+        ip.addOptional('cis',0.050,@(x)validateattributes(x,{'double'},{'real' 'finite' '>' 0 '<=' 0.1 'scalar'}));
+        ip.addOptional('cib',100,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 10 '<=' 1000 'scalar'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     data = validate_input(ipr.data);
     a = ipr.a;
@@ -45,16 +45,16 @@ function [cq,ci] = cross_quantilograms_sb_internal(data,a,k,cis,cib)
     [t,n] = size(data);
     len = t - k;
     partial = n > 2;
-    
+
     cis = cis / 2;
-    
+
     d = zeros(len,n);
     d(:,1) = data(k+1:t,1);
     d(:,2:n) = data(1:len,2:n);
-    
+
     block_length = ppw_optimal_block_length(d);
     g = mean(block_length(:,1));
-    
+
     a_sb = ones(len,n) .* a;
     cq_sb = zeros(cib,1);
 
@@ -64,9 +64,9 @@ function [cq,ci] = cross_quantilograms_sb_internal(data,a,k,cis,cib)
 
             d_sb = d(indices,:);
             q_sb = (d_sb <= repmat(gumbel_quantile(d_sb,a),len,1)) - a_sb;
-            
+
             h_sb = q_sb.' * q_sb;
-            
+
             if (det(h_sb) <= 1e-08)
                 hi_sb = pinv(h_sb);
             else
@@ -81,19 +81,19 @@ function [cq,ci] = cross_quantilograms_sb_internal(data,a,k,cis,cib)
 
             d_sb = d(indices,:);
             q_sb = (d_sb <= repmat(gumbel_quantile(d_sb,a),len,1)) - a_sb;
-            
+
             h_sb = q_sb.' * q_sb;
 
             cq_sb(i) = h_sb(1,2) / sqrt(h_sb(1,1) * h_sb(2,2));
         end
     end
-    
+
     q = (data <= repmat(gumbel_quantile(data,a),t,1)) - (ones(t,n) .* a);
-    
+
     d = zeros(len,n);
     d(:,1) = q(k+1:t,1);
     d(:,2:n) = q(1:len,2:n);
-    
+
     h = d.' * d;
 
     if (partial)
@@ -118,11 +118,11 @@ function q = gumbel_quantile(x,p)
     index = 1 + ((size(x,1) - 1) * p);
     low = floor(index);
     high = ceil(index);
-    
+
     x = sort(x);
     x_low = x(low,:);
     x_high = x(high,:);
-    
+
     h = max(index - low,0);
     q = (h .* x_high) + ((1 - h) .* x_low);
 
@@ -208,7 +208,7 @@ function bl = ppw_optimal_block_length(x)
             bl(ppw_i,:) = 1;
         end
     end
-    
+
     function l = m_lag(x,n)
 
         mn = numel(x);

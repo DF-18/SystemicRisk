@@ -1,10 +1,11 @@
 % [INPUT]
-% data = A float t-by-n matrix representing the model input.
-% lags = An integer [1,3] representing the number of lags of the VAR model (optional, default=2).
-% h = An integer [1,10] representing the prediction horizon (optional, default=4).
-% fevd = A string representing the FEVD type (optional, default='G'):
+% data = A float t-by-n matrix (-Inf,Inf) representing the model input.
+% fevd = A string representing the FEVD type:
 %   - 'G' for generalized FEVD.
 %   - 'O' for orthogonal FEVD.
+% lags = An integer [1,3] representing the number of lags of the VAR model (optional, default=2).
+% h = An integer [1,10] representing the prediction horizon (optional, default=4).
+
 %
 % [OUTPUT]
 % vd = A float n-by-n matrix (-Inf,Inf) representing the variance decomposition.
@@ -16,34 +17,34 @@ function vd = variance_decomposition(varargin)
     if (isempty(ip))
         ip = inputParser();
         ip.addRequired('data',@(x)validateattributes(x,{'double'},{'real' '2d' 'nonempty'}));
-        ip.addRequired('lags',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 1 '<=' 3 'scalar'}));
-        ip.addRequired('h',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 1 '<=' 10 'scalar'}));
         ip.addRequired('fevd',@(x)any(validatestring(x,{'G' 'O'})));
+        ip.addOptional('lags',2,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 1 '<=' 3 'scalar'}));
+        ip.addOptional('h',4,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 1 '<=' 10 'scalar'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     data = validate_input(ipr.data);
+    fevd = ipr.fevd;
     lags = ipr.lags;
     h = ipr.h;
-    fevd = ipr.fevd;
 
     nargoutchk(1,1);
 
-    vd = variance_decomposition_internal(data,lags,h,fevd);
+    vd = variance_decomposition_internal(data,fevd,lags,h);
 
 end
 
-function vd = variance_decomposition_internal(data,lags,h,fevd) 
+function vd = variance_decomposition_internal(data,fevd,lags,h) 
 
     [t,n] = size(data);
     d = max(n * 5,t) - t;
     k = t + d - lags;
 
     if (d > 0)
-        mu = ones(d,1) .* mean(data,1);
-        sigma = ones(d,1) .* std(data,1);
+        mu = repmat(mean(data,1),d,1);
+        sigma = repmat(std(data,1),d,1);
 
         c = corr(data);
         c(isnan(c)) = 0;
@@ -107,7 +108,7 @@ function vd = variance_decomposition_internal(data,lags,h,fevd)
         coefficients{i} = reshape(f(indices),n,n);
         ar_start = indices(end) + 1;
     end
-    
+
     g = zeros(n * lags,n * lags);
     g(1:n,:) = cell2mat(coefficients);
 
@@ -125,10 +126,10 @@ function vd = variance_decomposition_internal(data,lags,h,fevd)
             ma{i} = temp(1:n,1:n);
         end
     end
-    
+
     irf = zeros(h,n,n);
     vds = zeros(h,n,n);
-    
+
     if (strcmp(fevd,'G'))
         sigma = diag(c);
 

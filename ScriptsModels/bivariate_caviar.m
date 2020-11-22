@@ -21,31 +21,31 @@ function [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar(varargin)
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     r = validate_input(ipr.r);
     a = ipr.a;
 
     nargoutchk(2,6);
-    
+
     switch (nargout)
         case 3
             error('Both impulse response outputs must be assigned.');
         case 5
             error('Both standard error outputs must be assigned.');
     end
-    
+
     cir = false;
     cse = false;
-    
+
     if (nargout >= 3)
         cir = true;
-        
+
         if (nargout >= 5)
             cse = true;
         end
     end
-    
+
     [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar_internal(r,a,cir,cse);
 
 end
@@ -53,20 +53,17 @@ end
 function [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar_internal(r,a,cir,cse)
 
     persistent options;
-    persistent um_beta0;
 
     if (isempty(options))
         options = optimset(optimset(@fminsearch),'Display','none','MaxFunEvals',1000,'MaxIter',1000,'TolFun',1e-8,'TolX',1e-8);
     end
-    
-    if (isempty(um_beta0))
-        rng_current = rng();
-        rng(double(bitxor(uint16('T'),uint16('B'))));
-        cleanup = onCleanup(@()rng(rng_current));
-        um_beta0 = unifrnd(0,1,[10000 3]);
-    end
-    
+
     up = isempty(getCurrentTask());
+
+    rng_current = rng();
+    rng(double(bitxor(bitxor(uint16('T'),uint16('B')),bitxor(uint16('B'),uint16('C')))));
+    um_beta0 = unifrnd(0,1,[10000 3]);
+    rng(rng_current);
 
     c = zeros(3,2);
     q = zeros(1,2);
@@ -77,7 +74,7 @@ function [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar_internal(r,a,cir,
 
             parfor i = 1:2
                 r_i = r(:,i);
-                rhs_i = sortrows(r_i(1:100),1,'ascend');
+                rhs_i = sort(r_i(1:100));
                 q_i = rhs_i(qo);
 
                 c(:,i) = univariate_model(r_i,q_i,a,um_beta0,options);
@@ -98,7 +95,7 @@ function [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar_internal(r,a,cir,
 
             for i = 1:2
                 r_i = r(:,i);
-                rhs_i = sortrows(r_i(1:100),1,'ascend');
+                rhs_i = sort(r_i(1:100));
                 q_i = rhs_i(qo);
 
                 c(:,i) = univariate_model(r_i,q_i,a,um_beta0);
@@ -124,12 +121,12 @@ function [caviar,beta,ir_fm,ir_mf,se,stats] = bivariate_caviar_internal(r,a,cir,
 
     [~,~,caviar_full] = objective(beta,r,a,q);
     caviar = -1 .* min(caviar_full(:,2),0);
-    
+
     if (cir)
         [vc,se,stats] = standard_errors(r,a,beta,caviar_full);
         ir_fm = impulse_response(r,beta,vc,true);
         ir_mf = impulse_response(r,beta,vc,false);
-        
+
         if (~cse)
             se = [];
             stats = [];
@@ -150,7 +147,7 @@ function ir = impulse_response(r,beta,vc,mkt)
     else
         shock = [0; 2];
     end
-    
+
     c = cov(r);
     cl = chol(c,'lower');
 
@@ -186,14 +183,14 @@ function ir = impulse_response(r,beta,vc,mkt)
         for j = 0:i-2
             sb = sb + kron((m2.')^(i-2-j),m2^j);
         end
-        
+
         g = (m2^(i-1) * g1) + kron((m1 * abs(cl * shock)).',e2) * (sb * db);
         se(i,:) = diag(sqrt(g * vc * g.')); 
     end
 
     ir_all_lb = ir_all - (2 .* se);
     ir_all_ub  = ir_all + (2 .* se);
-    
+
     if (mkt)
         ir = [ir_all(:,2) ir_all_lb(:,2) ir_all_ub(:,2)];
     else
@@ -217,10 +214,10 @@ function [rq,hits,caviar] = objective(beta,r,a,q)
     for t = 2:t
         caviar(t,:) = m0 + (abs(r(t-1,:)) * m1) + (caviar(t-1,:) * m2);
     end
-    
+
     hits = (a * ones(t,2)) - (r < caviar);
     rq = mean(sum((r - caviar) .* hits,2));
-    
+
     if (~isfinite(rq))
         rq = 1e100;
     end
@@ -230,7 +227,7 @@ end
 function [vc,se,stats] = standard_errors(r,a,beta,caviar)
 
     t = size(r,1);
-    
+
     e2 = eye(2);
 
     m = reshape(beta,2,5);
@@ -243,7 +240,7 @@ function [vc,se,stats] = standard_errors(r,a,beta,caviar)
     for t = 2:t
         dq(:,:,t) = dm1 + (kron(abs(r(t-1,:)),e2) * dm2) + (m(:,4:end) * dq(:,:,t-1)) + (kron(caviar(t-1,:),e2) * dm3);
     end
-    
+
     d = r - caviar;
 
     k = median(abs(d(:,1) - median(d(:,1))));
@@ -271,12 +268,12 @@ function [vc,se,stats] = standard_errors(r,a,beta,caviar)
 
     q = q / (2 * c * t);
     v = v / t; 
-    vc = (q \ v / q) / t;
+    vc = (linsolve(q,v) / q) / t;
 
-	r = [zeros(4,3), [e2; zeros(2)], zeros(4,2), [zeros(2); e2], zeros(4,1)];
+    r = [zeros(4,3), [e2; zeros(2)], zeros(4,2), [zeros(2); e2], zeros(4,1)];
     cv = ((r * beta).' / (r * vc * r.')) * (r * beta);
     pval = 1 - chi2cdf(cv,4);
-    
+
     se = sqrt(diag(vc));
     stats = [cv pval];
 
@@ -286,13 +283,14 @@ function beta = univariate_model(r,q,a,beta0,options)
 
     w = size(beta0,1);
     rq0 = zeros(w,1);
-    
+
     for i = 1:w
         [rq0(i),~,~] = univariate_model_objective(beta0(i,:).',r,a,q);
     end
-    
+
     m = [rq0 beta0];
     ms = sortrows(m,1);
+
     beta1  = ms(1,2:end).';
     beta2 = fminsearch(@(x)univariate_model_objective(x,r,a,q),beta1,options);
     beta = fminsearch(@(x)univariate_model_objective(x,r,a,q),beta2,options);
@@ -312,7 +310,7 @@ function [rq,hits,caviar] = univariate_model_objective(beta,r,a,q)
 
     hits = -((r < caviar) - a);
     rq  = hits.' * (r - caviar);
-    
+
     if (~isfinite(rq))
         rq = 1e100;
     end

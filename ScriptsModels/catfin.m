@@ -1,8 +1,8 @@
 % [INPUT]
 % r = A vector of floats (-Inf,Inf) of length t representing the logarithmic returns.
 % a = A float [0.01,0.10] representing the quantile used to calculate all the values-at-risk.
-% g = A float [0.75,0.99] representing the weighting factor used to calculate the non-parametric value-at-risk.
-% u = A float [0.01,0.10] representing the threshold used to calculate the GPD value-at-risk.
+% g = A float [0.75,0.99] representing the weighting factor used to calculate the non-parametric value-at-risk (optional, default=0.98).
+% u = A float [0.01,0.10] representing the threshold used to calculate the GPD value-at-risk (optional, default=0.05).
 %
 % [OUTPUT]
 % var_np = A float (-Inf,0] representing the non-parametric value-at-risk.
@@ -18,12 +18,12 @@ function [var_np,var_gpd,var_gev,var_sged] = catfin(varargin)
         ip = inputParser();
         ip.addRequired('r',@(x)validateattributes(x,{'double'},{'real' 'finite' 'vector' 'nonempty'}));
         ip.addRequired('a',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.01 '<=' 0.10 'scalar'}));
-        ip.addRequired('g',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.50 '<=' 0.99 'scalar'}));
-        ip.addRequired('u',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.01 '<=' 0.10 'scalar'}));
+        ip.addOptional('g',0.98,@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.50 '<=' 0.99 'scalar'}));
+        ip.addOptional('u',0.05,@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.01 '<=' 0.10 'scalar'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     r = validate_input(ipr.r);
     a = ipr.a;
@@ -47,7 +47,7 @@ function [var_np,var_gpd,var_gev,var_sged] = catfin_internal(r,a,g,u)
     t = size(r,1);
 
     w = fliplr(((1 - g) / (1 - g^t)) .* (g .^ (0:1:t-1))).';  
-    h = sortrows([r w],1,'ascend');
+    h = sortrows([r w],1);
     csw = cumsum(h(:,2));
     cswa = find(csw >= a);
     var_np = h(cswa(1),1);  
@@ -75,7 +75,7 @@ function [var_np,var_gpd,var_gev,var_sged] = catfin_internal(r,a,g,u)
     catch
         var_sged = NaN;
     end
-    
+
     vars = min(0,[var_np var_gpd var_gev var_sged]);
     [var_np,var_gpd,var_gev,var_sged] = deal(vars(1),vars(2),vars(3),vars(4));
 

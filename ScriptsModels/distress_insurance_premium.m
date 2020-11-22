@@ -1,12 +1,12 @@
 % [INPUT]
-% r = A float t-by-n matrix representing the logarithmic returns.
+% r = A float t-by-n matrix (-Inf,Inf) representing the logarithmic returns.
 % cds = A vector of floats [0,Inf) of length n representing the credit default swap spreads.
 % lb = A vector of floats [0,Inf) of length n representing the liabilities.
-% lgd = A float [0,1] representing the loss given default.
-% f = An integer [2,n], where n is the number of firms, representing the number of systematic risk factors.
-% l = A float [0.05,0.20] representing the importance sampling threshold.
-% c = An integer [50,1000] representing the number of simulated samples.
-% it = An integer [5,100] representing the number of iterations to perform.
+% f = An integer [2,n], where n is the number of firms, representing the number of systematic risk factors (optional, default=2).
+% lgd = A float (0,1] representing the loss given default, complement to recovery rate (optional, default=0.55).
+% l = A float [0.05,0.20] representing the importance sampling threshold (optional, default=0.10).
+% c = An integer [50,1000] representing the number of simulated samples (optional, default=100).
+% it = An integer [5,100] representing the number of iterations to perform (optional, default=5).
 %
 % [OUTPUT]
 % dip = A float [0,Inf) representing the Distress Insurance Premium.
@@ -20,41 +20,40 @@ function dip = distress_insurance_premium(varargin)
         ip.addRequired('r',@(x)validateattributes(x,{'double'},{'real' '2d' 'nonempty'}));
         ip.addRequired('cds',@(x)validateattributes(x,{'double'},{'real' 'nonnegative' 'vector' 'nonempty'}));
         ip.addRequired('lb',@(x)validateattributes(x,{'double'},{'real' 'nonnegative' 'vector' 'nonempty'}));
-        ip.addRequired('lgd',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0 '<=' 1 'scalar'}));
-        ip.addRequired('f',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 2 'scalar'}));
-        ip.addRequired('l',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.05 '<=' 0.20 'scalar'}));
-        ip.addRequired('c',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 50 '<=' 1000 'scalar'}));
-        ip.addRequired('it',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 5 '<=' 100 'scalar'}));
+        ip.addOptional('f',2,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 2 'scalar'}));
+        ip.addOptional('lgd',0.55,@(x)validateattributes(x,{'double'},{'real' 'finite' '>' 0 '<=' 1 'scalar'}));
+        ip.addOptional('l',0.10,@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.05 '<=' 0.20 'scalar'}));
+        ip.addOptional('c',100,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 50 '<=' 1000 'scalar'}));
+        ip.addOptional('it',5,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 5 '<=' 100 'scalar'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
-    [n,indices,r,cds,lb] = validate_input(ipr.r,ipr.cds,ipr.lb);
+    [n,indices,r,cds,lb,f] = validate_input(ipr.r,ipr.cds,ipr.lb,ipr.f);
     lgd = ipr.lgd;
-    f = min(ipr.f,n);
     l = ipr.l;
     c = ipr.c;
     it = ipr.it;
 
     nargoutchk(1,1);
 
-    dip = distress_insurance_premium_internal(n,indices,r,cds,lb,lgd,f,l,c,it);
+    dip = distress_insurance_premium_internal(n,indices,r,cds,lb,f,lgd,l,c,it);
 
 end
 
-function dip = distress_insurance_premium_internal(n,indices,r,cds,lb,lgd,f,l,c,it)
+function dip = distress_insurance_premium_internal(n,indices,r,cds,lb,f,lgd,l,c,it)
 
     up = isempty(getCurrentTask());
 
-    [dt,dw,ead,ead_volume,lgd] = estimate_default_parameters(cds(indices),lb(indices),n,lgd);
     b = estimate_factor_loadings(r(:,indices),f);
+    [dt,dw,ead,ead_volume,lgd] = estimate_default_parameters(cds(indices),lb(indices),n,lgd);
 
     bi = floor(c * 0.2);
     c2 = c^2;
 
     a = zeros(5,1);
-    
+
     if (up)
         parfor i = 1:it 
             mcmc_p = slicesample(rand(1,f),c,'PDF',@(x)zpdf(x,dt,ead,lgd,b,l),'Thin',3,'BurnIn',bi);
@@ -92,7 +91,7 @@ function dip = distress_insurance_premium_internal(n,indices,r,cds,lb,lgd,f,l,c,
             a(i) = mean((losses > l) .* lr);
         end
     end
-    
+
     dip = max(mean(a) * ead_volume,0);
 
 end
@@ -151,7 +150,7 @@ function [theta,theta_p] = exponential_twist(phi,w,l)
     if (isempty(options))
         options = optimset(optimset(@fminunc),'Diagnostics','off','Display','off','LargeScale','off');
     end
-    
+
     [c,n] = size(phi);
 
     theta = zeros(c,1);
@@ -211,7 +210,7 @@ function [mu,sigma,weights] = gmm_fit(x,gm)
         [~,indices] = max((x * m.') - repmat(dot(m,m,2).' / 2,c,1),[],2);
         [u,~,indices] = unique(indices);
     end
-    
+
     r = zeros(c,gm);
     r(sub2ind([c gm],1:c,indices.')) = 1;
 
@@ -242,7 +241,7 @@ function [mu,sigma,weights] = gmm_fit(x,gm)
             sigma(:,:,j) = h;
 
             cu = chol(h,'upper');
-            q0 = cu.' \ x0.';
+            q0 = linsolve(cu.',x0.');
             q1 = dot(q0,q0,1);
             nc = (s * log(2 * pi())) + (2 * sum(log(diag(cu))));
             rho(:,j) = (-(nc + q1) / 2) + log(weights(j));
@@ -295,35 +294,37 @@ function p = zpdf(z,dt,ead,lgd,b,l)
 
 end
 
-function [n,indices,r,cds,lb] = validate_input(r,cds,lb)
+function [n,indices,r,cds,lb,f] = validate_input(r,cds,lb,f)
 
     [t,n_tot] = size(r);
 
     if ((t < 5) || (n_tot < 2))
         error('The value of ''r'' is invalid. Expected input to be a matrix with a minimum size of 5x2.');
     end
-    
+
     cds = cds(:).';
-    
+
     if (numel(cds) ~= n_tot)
-        error(['The value of ''cds'' is invalid. Expected input to be an array of ' num2str(n_tot) ' elements.']);
+        error(['The value of ''cds'' is invalid. Expected input to be a vector of ' num2str(n_tot) ' elements.']);
     end
-    
+
     if (all(cds >= 1))
         cds = cds ./ 10000;
     end
-    
+
     lb = lb(:).';
-    
+
     if (numel(lb) ~= n_tot)
-        error(['The value of ''lb'' is invalid. Expected input to be an array of ' num2str(n_tot) ' elements.']);
+        error(['The value of ''lb'' is invalid. Expected input to be a vector of ' num2str(n_tot) ' elements.']);
     end
-    
+
     indices = (sum(isnan(r),1) == 0) & ~isnan(cds) & ~isnan(lb);
     n = sum(indices);
-    
+
     if (n < 2)
         error('Input data must contain at least 2 valid time series without NaN values.');
     end
+
+    f = min(f,n);
 
 end

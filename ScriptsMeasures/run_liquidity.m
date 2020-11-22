@@ -1,6 +1,7 @@
 % [INPUT]
 % ds = A structure representing the dataset.
-% temp = A string representing the full path to the Excel spreadsheet used as a template for the results file.
+% sn = A string representing the serial number of the result file.
+% temp = A string representing the full path to the Excel spreadsheet used as template for the result file.
 % out = A string representing the full path to the Excel spreadsheet to which the results are written, eventually replacing the previous ones.
 % bwl = An integer [90,252] representing the dimension of the long bandwidth (optional, default=252).
 % bwm = An integer [21,90) representing the dimension of the medium bandwidth (optional, default=21).
@@ -26,6 +27,7 @@ function [result,stopped] = run_liquidity(varargin)
     if (isempty(ip))
         ip = inputParser();
         ip.addRequired('ds',@(x)validateattributes(x,{'struct'},{'nonempty'}));
+        ip.addRequired('sn',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addRequired('temp',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addRequired('out',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addOptional('bwl',252,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 90 '<=' 252 'scalar'}));
@@ -41,7 +43,8 @@ function [result,stopped] = run_liquidity(varargin)
     ip.parse(varargin{:});
 
     ipr = ip.Results;
-    ds = validate_dataset(ipr.ds,'cross-sectional');
+    ds = validate_dataset(ipr.ds,'Liquidity');
+    sn = ipr.sn;
     temp = validate_template(ipr.temp);
     out = validate_output(ipr.out);
     [bwl,bwm,bws] = validate_bandwidths(ipr.bwl,ipr.bwm,ipr.bws);
@@ -50,33 +53,33 @@ function [result,stopped] = run_liquidity(varargin)
     c = ipr.c;
     s2 = ipr.s2;
     analyze = ipr.analyze;
-    
+
     nargoutchk(1,2);
 
-    [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w,c,s2,analyze);
+    [result,stopped] = run_liquidity_internal(ds,sn,temp,out,bwl,bwm,bws,mem,w,c,s2,analyze);
 
 end
 
-function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w,c,s2,analyze)
+function [result,stopped] = run_liquidity_internal(ds,sn,temp,out,bwl,bwm,bws,mem,w,c,s2,analyze)
 
     result = [];
     stopped = false;
     e = [];
 
-    ds = initialize(ds,bwl,bwm,bws,mem,w,c,s2);
+    ds = initialize(ds,sn,bwl,bwm,bws,mem,w,c,s2);
     n = ds.N;
     t = ds.T;
 
     bar = waitbar(0,'Initializing liquidity measures...','CreateCancelBtn',@(src,event)setappdata(gcbf(),'Stop', true));
     setappdata(bar,'Stop',false);
     cleanup = onCleanup(@()delete(bar));
-    
+
     pause(1);
     waitbar(0,bar,'Calculating liquidity measures...');
     pause(1);
 
     try
-        
+
         ci = ds.CI;
 
         p = ds.Prices;
@@ -84,7 +87,7 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
         v = ds.Volumes;
         cp = ds.Capitalizations;
         sv = ds.StateVariables;
-        
+
         mag_r = floor(round((log(abs(r(:))) ./ log(10)),15));
         mag_r(~isfinite(mag_r)) = [];
         mag_r = round(abs(mean(mag_r)),0);
@@ -102,7 +105,7 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
                 stopped = true;
                 break;
             end
-            
+
             offset = min(ds.Defaults(i) - 1,t);
 
             p_i = p(1:offset,i);
@@ -126,7 +129,7 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
 
             ris = roll_implicit_spread(p_i,ds.BWL,ds.W,ds.C,ds.S2);
             ds.RIS(1:offset,i) = ris;
-            
+
             [hhlr,tr,vr] = liquidity_metrics(p_i,r_i,v_i,cp_i,ds.BWL,ds.BWM,ds.BWS);
             ds.HHLR(1:offset,i) = hhlr;
             ds.TR(1:offset,i) = tr;
@@ -136,7 +139,7 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
                 stopped = true;
                 break;
             end
-            
+
             waitbar(i / n,bar);
         end
 
@@ -147,7 +150,7 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
         delete(bar);
         rethrow(e);
     end
-    
+
     if (stopped)
         delete(bar);
         return;
@@ -163,11 +166,11 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
         delete(bar);
         rethrow(e);
     end
-    
+
     pause(1);
     waitbar(1,bar,'Writing liquidity measures...');
     pause(1);
-    
+
     try
         write_results(ds,temp,out);
         delete(bar);
@@ -175,26 +178,26 @@ function [result,stopped] = run_liquidity_internal(ds,temp,out,bwl,bwm,bws,mem,w
         delete(bar);
         rethrow(e);
     end
-    
+
     if (analyze)
-        safe_plot(@(id)plot_averages(ds,id));
-        safe_plot(@(id)plot_sequence_other(ds,'HHLR',id));
-        safe_plot(@(id)plot_sequence_illiq(ds,id));
-        safe_plot(@(id)plot_sequence_other(ds,'RIS',id));
-        safe_plot(@(id)plot_sequence_other(ds,'TR',id));
-        safe_plot(@(id)plot_sequence_other(ds,'VR',id));
+        analyze_result(ds);
     end
-    
+
     result = ds;
 
 end
 
 %% DATA
 
-function ds = initialize(ds,bwl,bwm,bws,mem,w,c,s2)
+function ds = initialize(ds,sn,bwl,bwm,bws,mem,w,c,s2)
 
     n = ds.N;
     t = ds.T;
+
+    ds.Result = 'Liquidity';
+    ds.ResultDate = now();
+    ds.ResultAnalysis = @(ds)analyze_result(ds);
+    ds.ResultSerial = sn;
 
     ds.CI = ~isempty(ds.StateVariables);
     ds.BWL = bwl;
@@ -204,10 +207,10 @@ function ds = initialize(ds,bwl,bwm,bws,mem,w,c,s2)
     ds.MEM = mem;
     ds.S2 = s2;
     ds.W = w;
-    
+
     mem_label = [' (MEM=' ds.MEM ')'];
     ris_label = [' (W=' num2str(ds.W) ', C=' num2str(ds.C) ', S2=' num2str(ds.S2) ')'];
-    
+
     if (ds.CI)
         ds.LabelsMeasuresSimple = {'HHLR' 'ILLIQ' 'ILLIQC' 'RIS' 'TR' 'VR'};
         ds.LabelsMeasures = {'HHLR' ['ILLIQ' mem_label] ['ILLIQC' mem_label] ['RIS' ris_label] 'TR' 'VR'};
@@ -215,31 +218,31 @@ function ds = initialize(ds,bwl,bwm,bws,mem,w,c,s2)
         ds.LabelsMeasuresSimple = {'HHLR' 'ILLIQ' 'RIS' 'TR' 'VR'};
         ds.LabelsMeasures = {'HHLR' ['ILLIQ' mem_label] ['RIS' ris_label] 'TR' 'VR'};
     end
-    
+
     ds.LabelsSheetsSimple = [ds.LabelsMeasuresSimple {'Averages'}];
     ds.LabelsSheets = [ds.LabelsMeasures {'Averages'}];
-    
+
     ds.HHLR = NaN(t,n);
     ds.ILLIQ = NaN(t,n);
-    
+
     if (strcmp(ds.MEM,'S'))
         ds.ILLIQKnots = NaN(1,n);
     end
-    
+
     if (ds.CI)
         ds.ILLIQC = NaN(t,n);
-        
+
         if (strcmp(ds.MEM,'S'))
             ds.ILLIQCKnots = NaN(1,n);
         end
     end
-    
+
     ds.RIS = NaN(t,n);
     ds.TR = NaN(t,n);
     ds.VR = NaN(t,n);
-    
+
     ds.Averages = NaN(t,numel(ds.LabelsMeasures));
-    
+
     ds.ComparisonReferences = {'Averages' [] strcat({'LI-'},ds.LabelsMeasuresSimple)};
 
 end
@@ -255,21 +258,21 @@ function ds = finalize(ds)
 
     illiq_avg = sum(ds.ILLIQ .* weights,2,'omitnan');
     illiq_avg = (illiq_avg - min(illiq_avg)) ./ (max(illiq_avg) - min(illiq_avg));
-    
+
     if (ds.CI)
         illiqc_avg = sum(ds.ILLIQC .* weights,2,'omitnan');
         illiqc_avg = (illiqc_avg - min(illiqc_avg)) ./ (max(illiqc_avg) - min(illiqc_avg));
     else
         illiqc_avg = [];
     end
-    
+
     ris_avg = sum(ds.RIS .* weights,2,'omitnan');
 
     tr_avg = sum(ds.TR .* weights,2,'omitnan');
     tr_avg = (tr_avg - min(tr_avg)) ./ (max(tr_avg) - min(tr_avg));
 
     vr_avg = sum(ds.VR .* weights,2,'omitnan');    
-    
+
     ds.Averages = [hhlr_avg illiq_avg illiqc_avg ris_avg tr_avg vr_avg];
 
 end
@@ -289,9 +292,9 @@ function write_results(ds,temp,out)
     catch
         error('A system I/O error occurred while writing the results.');
     end
-    
+
     copy_result = copyfile(temp,out,'f');
-    
+
     if (copy_result == 0)
         error('The output file could not be created from the template file.');
     end
@@ -307,41 +310,24 @@ function write_results(ds,temp,out)
     end
 
     tab = [dates_str array2table(ds.Averages,'VariableNames',strrep(ds.LabelsSheetsSimple(1:end-1),' ','_'))];
-    writetable(tab,out,'FileType','spreadsheet','Sheet',ds.LabelsSheetsSimple{end},'WriteRowNames',true);    
+    writetable(tab,out,'FileType','spreadsheet','Sheet',ds.LabelsSheetsSimple{end},'WriteRowNames',true);
 
-    if (ispc())
-        try
-            excel = actxserver('Excel.Application');
-        catch
-            return;
-        end
-
-        try
-            exc_wb = excel.Workbooks.Open(out,0,false);
-
-            if (~ds.CI)
-                exc_wb.Sheets.Item('ILLIQC').Delete();
-            end
-            
-            for i = 1:numel(ds.LabelsSheetsSimple)
-                exc_wb.Sheets.Item(ds.LabelsSheetsSimple{i}).Name = ds.LabelsSheets{i};
-            end
-            
-            exc_wb.Save();
-            exc_wb.Close();
-            excel.Quit();
-        catch
-        end
-        
-        try
-            delete(excel);
-        catch
-        end
-    end
+    worksheets_batch(out,ds.LabelsSheetsSimple,ds.LabelsSheets);
 
 end
 
 %% PLOTTING
+
+function analyze_result(ds)
+
+    safe_plot(@(id)plot_averages(ds,id));
+    safe_plot(@(id)plot_sequence_other(ds,'HHLR',id));
+    safe_plot(@(id)plot_sequence_illiq(ds,id));
+    safe_plot(@(id)plot_sequence_other(ds,'RIS',id));
+    safe_plot(@(id)plot_sequence_other(ds,'TR',id));
+    safe_plot(@(id)plot_sequence_other(ds,'VR',id));
+
+end
 
 function plot_averages(ds,id)
 
@@ -352,19 +338,19 @@ function plot_averages(ds,id)
     vr = ds.Averages(:,find(strcmp('VR',ds.LabelsMeasuresSimple),1,'first'));
 
     f = figure('Name','Liquidity Measures > Averages','Units','normalized','Position',[100 100 0.85 0.85],'Tag',id);
-    
+
     if (ds.CI)
         illiqc = ds.Averages(:,find(strcmp('ILLIQC',ds.LabelsMeasuresSimple),1,'first'));
-        
+
         indices = (abs(illiqc - illiq) > 0.025);
         illiq_delta = NaN(ds.T,1);
         illiq_delta(indices) = illiqc(indices);
-        
+
         sub_1 = subplot(3,2,1);
         plot(sub_1,ds.DatesNum,illiq,'Color',[0.000 0.447 0.741]);
         set(sub_1,'YLim',[0 1.1]);
         title(sub_1,ds.LabelsMeasures{2});
-        
+
         sub_6 = subplot(3,2,2);
         plot(sub_6,ds.DatesNum,illiqc,'Color',[0.000 0.447 0.741]);
         hold on;
@@ -383,12 +369,12 @@ function plot_averages(ds,id)
     plot(sub_2,ds.DatesNum,hhlr,'Color',[0.000 0.447 0.741]);
     set(sub_2,'YLim',[0 1]);
     title(sub_2,ds.LabelsMeasures{1});
-    
+
     sub_3 = subplot(3,2,4);
     plot(sub_3,ds.DatesNum,ris,'Color',[0.000 0.447 0.741]);
     set(sub_3,'YLim',plot_limits(ris,0.1,0));
     title(sub_3,ds.LabelsMeasures{4});
-    
+
     sub_4 = subplot(3,2,5);
     plot(sub_4,ds.DatesNum,tr,'Color',[0.000 0.447 0.741]);
     set(sub_4,'YLim',[0 1]);
@@ -398,10 +384,10 @@ function plot_averages(ds,id)
     plot(sub_5,ds.DatesNum,vr,'Color',[0.000 0.447 0.741]);
     set(sub_5,'YLim',plot_limits(vr,0.1,0));
     title(sub_5,ds.LabelsMeasures{6});
-    
+
     set([sub_1 sub_2 sub_3 sub_4 sub_5],'XLim',[ds.DatesNum(1) ds.DatesNum(end)],'XTickLabelRotation',45);
     set([sub_1 sub_2 sub_3 sub_4 sub_5],'XGrid','on','YGrid','on');
-    
+
     if (ds.CI)
         set([sub_1 sub_2 sub_3 sub_4 sub_5 sub_6],'XLim',[ds.DatesNum(1) ds.DatesNum(end)],'XTickLabelRotation',45);
         set([sub_1 sub_2 sub_3 sub_4 sub_5 sub_6],'XGrid','on','YGrid','on');
@@ -441,12 +427,12 @@ function plot_sequence_illiq(ds,id)
 
     if (ds.CI)
         k = 2;
-        
+
         data = [repmat({dn},1,n); mat2cell(ds.ILLIQ,t,ones(1,n)); mat2cell(ds.ILLIQC,t,ones(1,n))];
-        
+
         plots_allocation = [2 1];
         plots_span = {1 2};
-  
+
         if (strcmp(ds.MEM,'S'))
             label_1 = strrep(ds.Labels{2},')','');
             titles_1 = arrayfun(@(x)sprintf([label_1 ', KT=%d)'],x),ds.ILLIQKnots,'UniformOutput',false);
@@ -458,9 +444,9 @@ function plot_sequence_illiq(ds,id)
         end
     else
         k = 1;
-        
+
         data = [repmat({dn},1,n); mat2cell(ds.ILLIQ,t,ones(1,n))];
-        
+
         plots_allocation = [1 1];
         plots_span = {1};
 
@@ -471,17 +457,17 @@ function plot_sequence_illiq(ds,id)
             plots_title = repmat(ds.Labels(2),1,n);
         end
     end
-    
+
     empty_param = repmat({[]},1,k);
 
     x_dates = repmat({mt},1,k);
     x_grid = repmat({true},1,k);
     x_limits = repmat({[dn(1) dn(end)]},1,k);
     x_rotation = repmat({45},1,k);
-    
+
     y_grid = repmat({true},1,k);
     y_limits = repmat({[0 1]},1,k);
-    
+
     core = struct();
 
     core.N = n;
@@ -512,22 +498,22 @@ function plot_sequence_illiq(ds,id)
     core.YTickLabels = empty_param;
 
     sequential_plot(core,id);
-    
+
     function plot_function(subs,data,k)
 
         x = data{1};
         y1 = data{2};
-        
+
         d = find(isnan(y1),1,'first');
-        
+
         if (isempty(d))
             xd = [];
         else
             xd = x(d) - 1;
         end
-        
+
         plot(subs(1),x,y1,'Color',[0.000 0.447 0.741]);
-        
+
         if (~isempty(xd))
             hold(subs(1),'on');
                 plot(subs(1),[xd xd],get(subs(1),'YLim'),'Color',[1 0.4 0.4]);
@@ -536,11 +522,11 @@ function plot_sequence_illiq(ds,id)
 
         if (k == 2)
             y2 = data{3};
-            
+
             indices = (abs(y2 - y1) > 0.025);
             delta = NaN(numel(y2),1);
             delta(indices) = y2(indices);
-            
+
             plot(subs(2),x,y2,'Color',[0.000 0.447 0.741]);
 
             hold(subs(2),'on');
@@ -567,15 +553,15 @@ function plot_sequence_other(ds,target,id)
     data = [repmat({dn},1,n); mat2cell(ts,t,ones(1,n))];
 
     plots_title = repmat(ds.LabelsMeasures(find(strcmp(target,ds.LabelsMeasuresSimple),1,'first')),1,n);
-    
+
     x_limits = [dn(1) dn(end)];
-    
+
     if (strcmp(target,'HHLR') || strcmp(target,'TR'))
         y_limits = [0 1];
     else
         y_limits = plot_limits(ts,0.1,0);
     end
-    
+
     core = struct();
 
     core.N = n;
@@ -606,14 +592,14 @@ function plot_sequence_other(ds,target,id)
     core.YTickLabels = {[]};
 
     sequential_plot(core,id);
-    
+
     function plot_function(subs,data)
-        
+
         x = data{1};
         y = data{2};
-        
+
         d = find(isnan(y),1,'first');
-        
+
         if (isempty(d))
             xd = [];
         else
@@ -639,21 +625,21 @@ function [bwl,bwm,bws] = validate_bandwidths(bwl,bwm,bws)
     if (bwl < (bwm * 2))
         error(['The long bandwidth (' num2str(bwl) ') must be at least twice the medium bandwidth (' num2str(bwm) ').']);
     end
-  
+
     if (bwm < (bws * 2))
         error(['The medium bandwidth (' num2str(bwm) ') must be at least twice the short bandwidth (' num2str(bws) ').']);
     end
-    
+
 end
 
 function out = validate_output(out)
 
     [path,name,extension] = fileparts(out);
 
-    if (~strcmp(extension,'.xlsx'))
+    if (~strcmpi(extension,'.xlsx'))
         out = fullfile(path,[name extension '.xlsx']);
     end
-    
+
 end
 
 function temp = validate_template(temp)
@@ -664,23 +650,7 @@ function temp = validate_template(temp)
     if (~all(ismember(sheets,file_sheets)))
         error(['The template must contain the following sheets: ' sheets{1} sprintf(', %s',sheets{2:end}) '.']);
     end
-    
-    if (ispc())
-        try
-            excel = actxserver('Excel.Application');
-            excel_wb = excel.Workbooks.Open(temp,0,false);
 
-            for i = 1:numel(sheets)
-                excel_wb.Sheets.Item(sheets{i}).Cells.Clear();
-            end
-            
-            excel_wb.Save();
-            excel_wb.Close();
-            excel.Quit();
-
-            delete(excel);
-        catch
-        end
-    end
+    worksheets_batch(temp,sheets);
 
 end

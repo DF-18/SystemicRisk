@@ -4,17 +4,11 @@
 % db = A float or a vector of floats [0,Inf) of length k representing the default barrier.
 % r = A float or a vector of floats (-Inf,Inf) of length k representing the annualized risk-free interest rate.
 % t = A float or a vector of floats (0,Inf) of length k representing the time to maturity of default barrier.
-% car = A float [0.03,0.20] representing the capital adequacy ratio used to calculate the D2C.
+% car = A float [0.03,0.20] representing the capital adequacy ratio used to calculate the Distance to Capital (optional, default=0.08).
 %
 % [OUTPUT]
-% beta = A column vector of floats [0,Inf) of length k representing the CAPM Beta.
-% var = A column vector of floats [0,Inf) of length k representing the Value-at-Risk.
-% es = A column vector of floats [0,Inf) of length k representing the Expected Shortfall.
-% covar = A column vector of floats [0,Inf) of length k representing the Conditional Value-at-Risk.
-% dcovar = A column vector of floats [0,Inf) of length k representing the Delta Conditional Value-at-Risk.
-% mes = A column vector of floats [0,Inf) of length k representing the Marginal Expected Shortfall.
-% ses = A column vector of floats [0,Inf) of length k representing the Systemic Expected Shortfall.
-% srisk = A column vector of floats [0,Inf) of length k representing the Conditional Capital Shortfall Index.
+% d2d = A column vector of floats (-Inf,Inf) of length k representing the Distance to Default.
+% d2c = A column vector of floats (-Inf,Inf) of length k representing the Distance to Capital.
 
 function [d2d,d2c] = default_metrics(varargin)
 
@@ -27,11 +21,11 @@ function [d2d,d2c] = default_metrics(varargin)
         ip.addRequired('db',@(x)validateattributes(x,{'double'},{'real' 'finite' 'nonnegative' 'vector' 'nonempty'}));
         ip.addRequired('r',@(x)validateattributes(x,{'double'},{'real' 'finite' 'vector' 'nonempty'}));
         ip.addRequired('t',@(x)validateattributes(x,{'double'},{'real' 'finite' '>' 0 'vector' 'nonempty'}));
-        ip.addRequired('car',@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.03 '<=' 0.20 'scalar'}));
+        ip.addOptional('car',0.08,@(x)validateattributes(x,{'double'},{'real' 'finite' '>=' 0.03 '<=' 0.20 'scalar'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     [va,db,r,t] = validate_input(ipr.va,ipr.db,ipr.r,ipr.t);
     vas = ipr.vas;
@@ -60,7 +54,7 @@ function [va,db,r,t] = validate_input(va,db,r,t)
 
     va = va(:);
     va_len = numel(va);
-    
+
     if (va_len < 5)
         error('The value of ''va'' is invalid. Expected input to be a vector containing at least 5 elements.');
     end
@@ -82,7 +76,7 @@ function [va,db,r,t] = validate_input(va,db,r,t)
 
     for i = 1:numel(data)
         data_i = data{i};
-        
+
         if (numel(data_i) == 1)
             data{i} = repmat(data_i,va_len,1);
         end

@@ -1,6 +1,6 @@
 % [INPUT]
 % data = A float t-by-n matrix containing the time series to be converted into rolling windows.
-% bw = An integer [2,252] representing the dimension of each rolling window.
+% bw = An integer [2,Inf) representing the dimension of each rolling window.
 % truncate = A boolean that indicates whether to exclude all the rolling windows with a dimension less than the bandwidth (optional, default=false).
 %
 % [OUTPUT]
@@ -16,7 +16,7 @@ function windows = extract_rolling_windows(varargin)
     if (isempty(ip))
         ip = inputParser();
         ip.addRequired('data',@(x)validateattributes(x,{'double'},{'2d' 'nonempty'}));
-        ip.addRequired('bw',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 2 '<=' 252 'scalar'}));
+        ip.addRequired('bw',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 2 'scalar'}));
         ip.addOptional('truncate',false,@(x)validateattributes(x,{'logical'},{'scalar'}));
     end
 

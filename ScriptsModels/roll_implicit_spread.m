@@ -16,13 +16,13 @@ function ris = roll_implicit_spread(varargin)
         ip = inputParser();
         ip.addRequired('p',@(x)validateattributes(x,{'double'},{'real' 'finite' 'vector' 'nonempty'}));
         ip.addRequired('bw',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 21 '<=' 252 'scalar'}));
-        ip.addRequired('w',@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 500}));
-        ip.addRequired('c',@(x)validateattributes(x,{'double'},{'real' 'finite' 'positive'}));
-        ip.addRequired('s2',@(x)validateattributes(x,{'double'},{'real' 'finite' 'positive'}));
+        ip.addOptional('w',1000,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 500}));
+        ip.addOptional('c',0.01,@(x)validateattributes(x,{'double'},{'real' 'finite' 'positive'}));
+        ip.addOptional('s2',0.0004,@(x)validateattributes(x,{'double'},{'real' 'finite' 'positive'}));
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     p = validate_input(ipr.p);
     bw = ipr.bw;
@@ -54,7 +54,7 @@ function ris = roll_implicit_spread_internal(p,bw,w,c,s2)
     end
 
     alpha = 2 / (bw + 1);
-	
+
     ris = [ris(1); filter(alpha,[1 (alpha - 1)],ris(2:end),(1 - alpha) * ris(1))];
 
 end
@@ -68,7 +68,7 @@ function g = gibbs_sampler(p,w,c,s2)
         dq = diff(q);
 
         d = 1 + ((1 / s2) * (dq.' * dq));
-        mu = d \ ((1 / s2) * (dq.' * dp));
+        mu = linsolve(d,(1 / s2) * (dq.' * dp));
         rho = inv(d);
         c = mvnrnd_truncated(mu,rho);
 
@@ -79,17 +79,17 @@ function g = gibbs_sampler(p,w,c,s2)
 
         q = perform_draw(p,q,c,s2);
     end
-    
+
     g = 2 * c;
 
 end
-    
+
 function q = perform_draw(p,q,c,s2)
 
     t = numel(p);
     q_nnz = q ~= 0;
     s22 = s2 * 2;
-    
+
     m = mod((1:t).',2);
     r = rand(t,1);
 
@@ -98,7 +98,7 @@ function q = perform_draw(p,q,c,s2)
 
     for i = 1:2
         o = (m == (i - 1)) & q_nnz;
-        
+
         if (~any(o))
             continue;
         end

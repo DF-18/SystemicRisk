@@ -1,5 +1,5 @@
 % [INPUT]
-% data = A float t-by-n matrix representing the model input; the performed test is aimed to assess whether the first observation is Granger-caused by the second one.
+% data = A float t-by-2 matrix representing the model input; the performed test is aimed to assess whether the first observations are Granger-caused by the second ones.
 % a = A float [0.01,0.10] representing the probability level of the F test critical value.
 % lag_max = An integer [2,Inf) representing the maximum lag order to be evaluated for both restricted and unrestricted models (optional, default=10).
 % lag_sel = A string representing the lag order selection criteria (optional, default='AIC'):
@@ -28,7 +28,7 @@ function [f,cv,h0,lag_r,lag_u] = granger_causality(varargin)
     end
 
     ip.parse(varargin{:});
-    
+
     ipr = ip.Results;
     [data,lag_max] = validate_input(ipr.data,ipr.lag_max);
     a = ipr.a;
@@ -58,13 +58,13 @@ function [f,cv,h0,lag_r,lag_u] = granger_causality_internal(data,a,lag_max,lag_s
         h0 = true;
         lag_r = 1;
         lag_u = 1;
-        
+
         return;
     end
-    
+
     xb = repmat(x,1,lag_max);
     yb = repmat(y,1,lag_max);
-    
+
     tmp = x;
     tmp(1:lag_max) = NaN;
     tmp = repmat(tmp,1,lag_max);
@@ -273,7 +273,7 @@ function [data,lag_max] = validate_input(data,lag_max)
 
     t = size(data,1);
     b = (lag_max * 2) + 1;
-    
+
     if (t < 5)
         error('The value of ''data'' is invalid. Expected input to be a matrix with at least 5 rows.');
     end

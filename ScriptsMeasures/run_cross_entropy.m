@@ -1,6 +1,7 @@
 % [INPUT]
 % ds = A structure representing the dataset.
-% temp = A string representing the full path to the Excel spreadsheet used as a template for the results file.
+% sn = A string representing the serial number of the result file.
+% temp = A string representing the full path to the Excel spreadsheet used as template for the result file.
 % out = A string representing the full path to the Excel spreadsheet to which the results are written, eventually replacing the previous ones.
 % bw = An integer [21,252] representing the dimension of each rolling window (optional, default=252).
 % sel = A string representing the time series selection method (optional, default='F'):
@@ -34,6 +35,7 @@ function [result,stopped] = run_cross_entropy(varargin)
     if (isempty(ip))
         ip = inputParser();
         ip.addRequired('ds',@(x)validateattributes(x,{'struct'},{'nonempty'}));
+        ip.addRequired('sn',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addRequired('temp',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addRequired('out',@(x)validateattributes(x,{'char'},{'nonempty' 'size' [1 NaN]}));
         ip.addOptional('bw',252,@(x)validateattributes(x,{'double'},{'real' 'finite' 'integer' '>=' 21 '<=' 252 'scalar'}));
@@ -47,7 +49,8 @@ function [result,stopped] = run_cross_entropy(varargin)
     ip.parse(varargin{:});
 
     ipr = ip.Results;
-    ds = validate_dataset(ipr.ds,'cross-entropy');
+    ds = validate_dataset(ipr.ds,'CrossEntropy');
+    sn = ipr.sn;
     temp = validate_template(ipr.temp);
     out = validate_output(ipr.out);
     bw = ipr.bw;
@@ -56,22 +59,22 @@ function [result,stopped] = run_cross_entropy(varargin)
     pw = ipr.pw;
     md = ipr.md;
     analyze = ipr.analyze;
-    
+
     nargoutchk(1,2);
-    
-    [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,md,analyze);
+
+    [result,stopped] = run_cross_entropy_internal(ds,sn,temp,out,bw,sel,rr,pw,md,analyze);
 
 end
 
-function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,md,analyze)
+function [result,stopped] = run_cross_entropy_internal(ds,sn,temp,out,bw,sel,rr,pw,md,analyze)
 
     result = [];
     stopped = false;
     e = [];
-    
-    ds = initialize(ds,bw,sel,rr,pw,md);
+
+    ds = initialize(ds,sn,bw,sel,rr,pw,md);
     t = ds.T;
-    
+
     bar = waitbar(0,'Initializing cross-entropy measures...','CreateCancelBtn',@(src,event)setappdata(gcbf(),'Stop',true));
     setappdata(bar,'Stop',false);
     cleanup = onCleanup(@()delete(bar));
@@ -81,10 +84,10 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
     pause(1);
 
     try
-        
+
         k = size(ds.Portfolios,1);
         tk = t * k;
-        
+
         futures(1:t,1:k) = parallel.FevalFuture;
         futures_max = 0;
         futures_results = cell(t,k);
@@ -92,7 +95,7 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
         for j = 1:k
             windows_r = extract_rolling_windows(ds.Portfolios{j,2},ds.BW);
             windows_pods = extract_rolling_windows(ds.Portfolios{j,3},ds.BW);
-            
+
             for i = 1:t
                 futures(i,j) = parfeval(@main_loop,1,windows_r{i},windows_pods{i},ds.PW,ds.MD);
             end
@@ -103,11 +106,11 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
                 stopped = true;
                 break;
             end
-            
+
             [future_index,value] = fetchNext(futures);
             [future_i,future_j] = ind2sub([t k],future_index);
             futures_results{future_i,future_j} = value;
-            
+
             futures_max = max([future_index futures_max]);
             waitbar((futures_max - 1) / tk,bar);
 
@@ -119,7 +122,7 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
 
     catch e
     end
-    
+
     try
         cancel(futures);
     catch
@@ -129,12 +132,12 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
         delete(bar);
         rethrow(e);
     end
-    
+
     if (stopped)
         delete(bar);
         return;
     end
-    
+
     pause(1);
     waitbar(1,bar,'Finalizing cross-entropy measures...');
     pause(1);
@@ -149,7 +152,7 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
     pause(1);
     waitbar(1,bar,'Writing cross-entropy measures...');
     pause(1);
-    
+
     try
         write_results(ds,temp,out);
         delete(bar);
@@ -159,32 +162,25 @@ function [result,stopped] = run_cross_entropy_internal(ds,temp,out,bw,sel,rr,pw,
     end
 
     if (analyze)
-        if (size(ds.Portfolios,1) > 1)
-            safe_plot(@(id)plot_portfolios_coverage(ds,id));
-        end
-
-        safe_plot(@(id)plot_indicators(ds,id));
-        safe_plot(@(id)plot_dide(ds,id));
-        safe_plot(@(id)plot_sequence_dide(ds,id));
-        safe_plot(@(id)plot_sequence_cojpods(ds,id));
+        analyze_result(ds)
     end
-    
+
     result = ds;
 
 end
 
 %% PROCESS
 
-function ds = initialize(ds,bw,sel,rr,pw,md)
+function ds = initialize(ds,sn,bw,sel,rr,pw,md)
 
     n = ds.N;
     t = ds.T;
-    
+
     if (strcmp(sel,'G'))
         g = ds.Groups;
         gd = ds.GroupDelimiters;
         gs = cell(g,1);
-        
+
         for i = 1:g
             if (i == 1)
                 gs{i} = 1:gd(1);
@@ -197,7 +193,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
 
         cds_ref = ds.CDS;
         cds = zeros(t,g);
-        
+
         r_ref = ds.Returns;
         r = zeros(t,g);
 
@@ -213,9 +209,9 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
             w_i = 1 ./ (repmat(gs_i_len,t,1) - sum(isnan(cds_i),2));
             cds(:,i) = sum(cds_i .* repmat(w_i,1,gs_i_len),2,'omitnan');
         end
-        
+
         cp_ref = ds.Capitalizations;
-        
+
         if (isempty(cp_ref))
             cp = [];
         else
@@ -225,9 +221,9 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
                 cp(:,i) = sum(cp_ref(:,gs{i}),2,'omitnan');
             end
         end
-        
+
         lb_ref = ds.Liabilities;
-        
+
         if (isempty(lb_ref))
             lb = [];
         else
@@ -245,18 +241,18 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
         lb = ds.Liabilities;
         r = ds.Returns;
     end
-    
+
     pods = cds ./ rr;
 
     if (n <= 10)
         nc = n;
-        
+
         if (strcmp(sel,'G'))
             pfc = ds.GroupShortNames.';
         else
             pfc = ds.FirmNames;
         end
-        
+
         pf = {'Unique' r pods []};
     else
         nc = 6;
@@ -266,7 +262,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
         pf = [repmat({''},4,1) cell(4,3)];
 
         rw = extract_rolling_windows(ds.Returns,bw);
-        
+
         pf_indices = zeros(t,nc);
         pf_pods = zeros(t,nc);
         pf_r = zeros(t,nc);
@@ -281,7 +277,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
             pf_pods(i,:) = pods(i,indices);
             pf_indices(i,:) = indices;
         end
-        
+
         pf(1,1:4) = {'CDS Spreads' pf_r pf_pods pf_indices};
 
         pf_indices = zeros(t,nc);
@@ -298,7 +294,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
             pf_pods(i,:) = pods(i,indices);
             pf_indices(i,:) = indices;
         end
-        
+
         pf(2,1:4) = {'Returns Variance' pf_r pf_pods pf_indices};
 
         if (isempty(cp))
@@ -310,7 +306,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
 
             for i = 1:t
                 [cp_i,indices] = sort(cp(i,:),'ascend');
-                
+
                 indices(isnan(cp_i)) = [];
                 indices = [fliplr(indices(end-nch+1:end)) fliplr(indices(1:nch))];
 
@@ -318,7 +314,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
                 pf_pods(i,:) = pods(i,indices);
                 pf_indices(i,:) = indices;
             end
-            
+
             pf(3,:) = {'Capitalization' pf_r pf_pods pf_indices};
             offset = 4;
         end
@@ -330,7 +326,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
 
             for i = 1:t
                 [lb_i,indices] = sort(lb(i,:),'ascend');
-                
+
                 indices(isnan(lb_i)) = [];
                 indices = [fliplr(indices(end-nch+1:end)) fliplr(indices(1:nch))];
 
@@ -338,13 +334,18 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
                 pf_pods(i,:) = pods(i,indices);
                 pf_indices(i,:) = indices;
             end
-            
+
             pf(offset,:) = {'Liabilities' pf_r pf_pods pf_indices};
             offset = offset + 1;
         end
-        
+
         pf(:,offset:end) = [];
     end
+
+    ds.Result = 'CrossEntropy';
+    ds.ResultDate = now();
+    ds.ResultAnalysis = @(ds)analyze_result(ds);
+    ds.ResultSerial = sn;
 
     ds.BW = bw;
     ds.LGD = 1 - rr;
@@ -360,7 +361,7 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
 
     ds.LabelsMeasuresSimple = {'SI' 'SV' 'CoJPoDs'};
     ds.LabelsMeasures = {['SI' all_label] ['SV' all_label] ['CoJPoDs' all_label]};
-    
+
     ds.LabelsIndicatorsSimple = {'JPoD' 'FSI' 'PCE'};
     ds.LabelsIndicators = {['JPoD' all_label] ['FSI' all_label] ['PCE' all_label]};
 
@@ -368,14 +369,14 @@ function ds = initialize(ds,bw,sel,rr,pw,md)
     ds.LabelsSheets = [{'Indicators' 'Average DiDe'} ds.LabelsMeasures];
 
     ds.Indicators = NaN(t,numel(ds.LabelsIndicators));
-    
+
     ds.AverageDiDe = NaN(nc);
     ds.DiDe = cell(t,1);
     ds.SI = NaN(t,nc);
     ds.SV = NaN(t,nc);
-    
+
     ds.CoJPoDs = NaN(t,nc);
-    
+
     ds.ComparisonReferences = {'Indicators' [] strcat({'CE-'},ds.LabelsIndicatorsSimple)};
 
 end
@@ -386,7 +387,7 @@ function window_results = main_loop(r,pods,pw,md)
 
     nan_indices = any(isnan(r),1);
     n = numel(nan_indices);
-    
+
     r(:,nan_indices) = [];
     pods(:,nan_indices) = [];
 
@@ -398,7 +399,7 @@ function window_results = main_loop(r,pods,pw,md)
         pods = sum(pods .* w,1).';
     end
 
-	[g,p] = cimdo(r,pods,md);
+    [g,p] = cimdo(r,pods,md);
 
     if (any(isnan(p)))
         window_results.JPoD = NaN;
@@ -447,13 +448,13 @@ function ds = finalize(ds,results)
         fsi_avg = mean(cellfun(@(x)x.FSI,results,'UniformOutput',true),2,'omitnan');
         pce_avg = mean(cellfun(@(x)x.PCE,results,'UniformOutput',true),2,'omitnan');
         ds.Indicators = [jpod_avg fsi_avg pce_avg];
-        
+
         dide = cellfun(@(x)x.DiDe,results,'UniformOutput',false);
         si = cellfun(@(x)x.SI,results,'UniformOutput',false);
         sv = cellfun(@(x)x.SI,results,'UniformOutput',false);
 
         cojpods = cellfun(@(x)x.CoJPoDs,results,'UniformOutput',false);
-        
+
         for i = 1:t
             ds.DiDe{i} = mean(cat(3,dide{i,:}),3);
             ds.SI(i,:) = mean(cat(3,si{i,:}),3);
@@ -462,7 +463,7 @@ function ds = finalize(ds,results)
             ds.CoJPoDs(i,:) = mean(cat(3,cojpods{i,:}),3);
         end
     end
-    
+
     ds.AverageDiDe = sum(cat(3,ds.DiDe{:}),3) ./ numel(ds.DiDe);
 
     si_vec = ds.SI(:);
@@ -492,9 +493,9 @@ function write_results(ds,temp,out)
     catch
         error('A system I/O error occurred while writing the results.');
     end
-    
+
     copy_result = copyfile(temp,out,'f');
-    
+
     if (copy_result == 0)
         error('The results file could not be created from the template file.');
     end
@@ -513,7 +514,7 @@ function write_results(ds,temp,out)
         header = {'Components'};
     end
 
-	labels = ds.LabelsIndicatorsSimple;
+    labels = ds.LabelsIndicatorsSimple;
     tab = [dates_str array2table(ds.Indicators,'VariableNames',labels)];
     writetable(tab,out,'FileType','spreadsheet','Sheet',ds.LabelsSheetsSimple{1},'WriteRowNames',true);
 
@@ -526,39 +527,28 @@ function write_results(ds,temp,out)
 
     tab = [dates_str array2table(ds.SV,'VariableNames',labels_all)];
     writetable(tab,out,'FileType','spreadsheet','Sheet',ds.LabelsSheetsSimple{4},'WriteRowNames',true);
-    
+
     tab = [dates_str array2table(ds.CoJPoDs,'VariableNames',labels_all)];
     writetable(tab,out,'FileType','spreadsheet','Sheet',ds.LabelsSheetsSimple{5},'WriteRowNames',true);
-    
-    if (ispc())
-        try
-            excel = actxserver('Excel.Application');
-        catch
-            return;
-        end
 
-        try
-            exc_wb = excel.Workbooks.Open(out,0,false);
+    worksheets_batch(out,ds.LabelsSheetsSimple,ds.LabelsSheets);
 
-            for i = 1:numel(ds.LabelsSheetsSimple)
-                exc_wb.Sheets.Item(ds.LabelsSheetsSimple{i}).Name = ds.LabelsSheets{i};
-            end
-            
-            exc_wb.Save();
-            exc_wb.Close();
-            excel.Quit();
-        catch
-        end
-        
-        try
-            delete(excel);
-        catch
-        end
-    end
-    
 end
 
 %% PLOTTING
+
+function analyze_result(ds)
+
+    if (size(ds.Portfolios,1) > 1)
+        safe_plot(@(id)plot_portfolios_coverage(ds,id));
+    end
+
+    safe_plot(@(id)plot_indicators(ds,id));
+    safe_plot(@(id)plot_dide(ds,id));
+    safe_plot(@(id)plot_sequence_dide(ds,id));
+    safe_plot(@(id)plot_sequence_cojpods(ds,id));
+
+end
 
 function plot_portfolios_coverage(ds,id)
 
@@ -569,11 +559,11 @@ function plot_portfolios_coverage(ds,id)
         n = ds.N;
         labels = ds.FirmNames;
     end
-    
+
     nc = numel(ds.PortfolioComponents);
 
     k = size(ds.Portfolios,1);
-    
+
     seq = 1:n;
 
     counts = cell(k + 1,2);
@@ -582,21 +572,21 @@ function plot_portfolios_coverage(ds,id)
     for i = 1:k
         pf_indices = ds.Portfolios{i,4};
         pf_indices = pf_indices(:);
-        
+
         [values_unique,~,indices_unique] = unique(pf_indices);
 
         count = zeros(n,1);
         count(values_unique) = accumarray(indices_unique,1);
-        
+
         count_total = count_total + count;
-        
+
         [count,order] = sort(count);
         counts(i + 1,:) = {(count ./ (sum(count) / nc)) labels(order)};
     end
 
     [count_total,order] = sort(count_total);
     counts(1,:) = {(count_total ./ (sum(count_total) / nc)) labels(order)};
-    
+
     if (k == 4)
         spp = [2 3];
         spo = {[1 4] 2 3 5 6};
@@ -611,22 +601,22 @@ function plot_portfolios_coverage(ds,id)
     f = figure('Name','Cross-Entropy Measures > Reduced Portfolios Coverage','Units','normalized','Position',[100 100 0.85 0.85],'Tag',id);
 
     subs = gobjects(k + 1,1);
-    
+
     sub_1 = subplot(spp(1),spp(2),spo{1});
     bar(sub_1,seq,counts{1,1},'FaceColor',[0.749 0.862 0.933]);
     set(sub_1,'XLim',[0 (ds.N + 1)],'XTick',seq,'XTickLabel',counts{1,2},'XTickLabelRotation',90);
     set(sub_1,'YLim',[0 1],'YTick',0:0.1:1,'YTickLabels',arrayfun(@(x)sprintf('%.f%%',x),(0:0.1:1) .* 100,'UniformOutput',false));
     title('Overall');
-    
+
     subs(1) = sub_1;
-    
+
     for i = 1:k
         sub = subplot(spp(1),spp(2),spo{i + 1});
         bar(sub,seq,counts{i + 1,1},'FaceColor',[0.749 0.862 0.933]);
         set(sub,'XLim',[0 (ds.N + 1)],'XTick',seq,'XTickLabel',counts{i + 1,2},'XTickLabelRotation',90);
         set(sub,'YLim',[0 1],'YTick',0:0.1:1,'YTickLabels',arrayfun(@(x)sprintf('%.f%%',x),(0:0.1:1) .* 100,'UniformOutput',false));
         title(ds.Portfolios{i,1});
-        
+
         subs(i + 1) = sub;
     end
 
@@ -649,7 +639,7 @@ function plot_indicators(ds,id)
     pce = smooth_data(ds.Indicators(:,3));
 
     f = figure('Name','Cross-Entropy Measures > Indicators','Units','normalized','Position',[100 100 0.85 0.85],'Tag',id);
-    
+
     sub_1 = subplot(2,2,1:2);
     plot(sub_1,ds.DatesNum,jpod);
     set(sub_1,'YLim',plot_limits(jpod,0.1,0));
@@ -657,20 +647,20 @@ function plot_indicators(ds,id)
     set(t1,'Units','normalized');
     t1_position = get(t1,'Position');
     set(t1,'Position',[0.4783 t1_position(2) t1_position(3)]);
-    
+
     sub_2 = subplot(2,2,3);
     plot(sub_2,ds.DatesNum,fsi);
     set(sub_2,'YLim',[1 nc],'YTick',1:nc);
     title(sub_2,ds.LabelsIndicatorsSimple{2});
-    
+
     sub_3 = subplot(2,2,4);
     plot(sub_3,ds.DatesNum,pce);
     set(sub_3,'YLim',[0 1],'YTick',0:0.1:1,'YTickLabels',arrayfun(@(x)sprintf('%.f%%',x),(0:0.1:1) .* 100,'UniformOutput',false));
     title(sub_3,ds.LabelsIndicatorsSimple{3});
-    
+
     set([sub_1 sub_2 sub_3],'XLim',[ds.DatesNum(1) ds.DatesNum(end)],'XTickLabelRotation',45);
     set([sub_1 sub_2 sub_3],'XGrid','on','YGrid','on');
-    
+
     if (ds.MonthlyTicks)
         date_ticks([sub_1 sub_2 sub_3],'x','mm/yyyy','KeepLimits','KeepTicks');
     else
@@ -691,11 +681,11 @@ function plot_dide(ds,id)
 
     dide = ds.AverageDiDe;
     didev = dide(:);
-    
+
     [dide_x,dide_y] = meshgrid(1:nc,1:nc);
     dide_x = dide_x(:) + 0.5;
     dide_y = dide_y(:) + 0.5;
-    
+
     dide_txt = cellstr(num2str(didev,'~%.4f'));
 
     for i = 1:nc^2
@@ -707,15 +697,15 @@ function plot_dide(ds,id)
             dide_txt{i} = '';
         end
     end
-    
+
     lt_indices = (dide < 0.2) & (dide ~= 1);
     ge_indices = (dide >= 0.2) & (dide ~= 1);
-    
+
     dide(lt_indices) =  0;
     dide(ge_indices) =  1;
     dide = dide - (eye(nc) .* 0.5);
     dide = padarray(dide,[1 1],'post');
-    
+
     didev = dide(:);
     didev_ones = any(didev == 1);
     didev_zeros = any(didev == 0);
@@ -723,7 +713,7 @@ function plot_dide(ds,id)
     f = figure('Name','Cross-Entropy Measures > Average Distress Dependency','Units','normalized','Position',[100 100 0.85 0.85],'Tag',id);
 
     pcolor(dide);
-    
+
     if (didev_ones && didev_zeros)
         colormap([1 1 1; 0.65 0.65 0.65; 0.749 0.862 0.933]);
     else
@@ -733,7 +723,7 @@ function plot_dide(ds,id)
             colormap([1 1 1; 0.65 0.65 0.65]);
         end
     end
-        
+
     text(dide_x,dide_y,dide_txt,'HorizontalAlignment','center');
     axis image;
 
@@ -741,7 +731,7 @@ function plot_dide(ds,id)
     set(ax,'TickLength',[0 0]);
     set(ax,'XAxisLocation','top','XTick',1.5:(nc + 0.5),'XTickLabels',ds.PortfolioComponents,'XTickLabelRotation',45);
     set(ax,'YDir','reverse','YTick',1.5:(nc + 0.5),'YTickLabels',ds.PortfolioComponents,'YTickLabelRotation',45);
-    
+
     figure_title('Average Distress Dependency');
 
     pause(0.01);
@@ -753,19 +743,19 @@ end
 function plot_sequence_dide(ds,id)
 
     nc = numel(ds.PortfolioComponents);
-    
+
     t = ds.T;
     dn = ds.DatesNum;
     mt = ds.MonthlyTicks;
-    
+
     ts_si = ds.SI;
     ts_sv = ds.SV;
 
     data = [repmat({dn},1,nc); mat2cell(ts_si,t,ones(1,nc)); mat2cell(ts_sv,t,ones(1,nc))];
-    
+
     sequence_titles = ds.PortfolioComponents;
-	
-	plots_title = [repmat(ds.LabelsMeasures(1),1,nc); repmat(ds.LabelsMeasures(2),1,nc)];
+
+    plots_title = [repmat(ds.LabelsMeasures(1),1,nc); repmat(ds.LabelsMeasures(2),1,nc)];
 
     x_limits = [dn(1) dn(end)];
 
@@ -802,15 +792,15 @@ function plot_sequence_dide(ds,id)
     core.YTickLabels = {[] []};
 
     sequential_plot(core,id);
-    
+
     function plot_function(subs,data)
-        
+
         x = data{1};
         si = data{2};
         sv = data{3};
-        
+
         d = min(find(isnan(si),1,'first'),find(isnan(sv),1,'first'));
-        
+
         if (isempty(d))
             xd = [];
         else
@@ -824,7 +814,7 @@ function plot_sequence_dide(ds,id)
                 plot(subs(1),[xd xd],get(subs(1),'YLim'),'Color',[1 0.4 0.4]);
             hold(subs(1),'off');
         end
-    
+
         plot(subs(2),x,sv,'Color',[0.000 0.447 0.741]);
 
         if (~isempty(xd))
@@ -832,7 +822,7 @@ function plot_sequence_dide(ds,id)
                 plot(subs(2),[xd xd],get(subs(2),'YLim'),'Color',[1 0.4 0.4]);
             hold(subs(2),'off');
         end
-        
+
     end
 
 end
@@ -844,18 +834,18 @@ function plot_sequence_cojpods(ds,id)
     t = ds.T;
     dn = ds.DatesNum;
     mt = ds.MonthlyTicks;
-    
+
     ts = smooth_data(ds.CoJPoDs);
 
     data = [repmat({dn},1,nc); mat2cell(ts,t,ones(1,nc))];
-    
+
     sequence_titles = ds.PortfolioComponents;
-    
+
     plots_title = repmat(ds.LabelsMeasures(3),1,nc);
-    
+
     x_limits = [dn(1) dn(end)];
-	y_limits = plot_limits(ts,0.1,0);
-    
+    y_limits = plot_limits(ts,0.1,0);
+
     y_tick_labels = @(x)sprintf('%.2f%%',x .* 100);
 
     core = struct();
@@ -888,20 +878,20 @@ function plot_sequence_cojpods(ds,id)
     core.YTickLabels = {y_tick_labels};
 
     sequential_plot(core,id);
-    
+
     function plot_function(subs,data)
 
         x = data{1};
         y = data{2};
-        
+
         d = find(isnan(y),1,'first');
-        
+
         if (isempty(d))
             xd = [];
         else
             xd = x(d) - 1;
         end
-        
+
         plot(subs(1),x,y,'Color',[0.000 0.447 0.741]);
 
         if (~isempty(xd))
@@ -920,10 +910,10 @@ function out = validate_output(out)
 
     [path,name,extension] = fileparts(out);
 
-    if (~strcmp(extension,'.xlsx'))
+    if (~strcmpi(extension,'.xlsx'))
         out = fullfile(path,[name extension '.xlsx']);
     end
-    
+
 end
 
 function sel = validate_selection(sel,groups)
@@ -940,25 +930,9 @@ function temp = validate_template(temp)
     file_sheets = validate_xls(temp,'T');
 
     if (~all(ismember(sheets,file_sheets)))
-        error(['The template must contain the following sheets: ' sheets{1} sprintf(', %s', sheets{2:end}) '.']);
+        error(['The template must contain the following sheets: ' sheets{1} sprintf(', %s',sheets{2:end}) '.']);
     end
-    
-    if (ispc())
-        try
-            excel = actxserver('Excel.Application');
-            excel_wb = excel.Workbooks.Open(res,0,false);
 
-            for i = 1:numel(sheets)
-                excel_wb.Sheets.Item(sheets{i}).Cells.Clear();
-            end
-            
-            excel_wb.Save();
-            excel_wb.Close();
-            excel.Quit();
-
-            delete(excel);
-        catch
-        end
-    end
+    worksheets_batch(temp,sheets);
 
 end
